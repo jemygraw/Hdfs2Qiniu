@@ -19,11 +19,13 @@ public class Config {
     public String fileList;
     public String keyPrefix;
     public String upHost;
+    public String rsHost;
     public boolean ignoreDir;
     public boolean overwrite;
     public boolean checkExists;
     public boolean checkHash;
     public boolean rescanLocal;
+    public boolean skipEmptyFile;
     public String skipFilePrefixes;
     public String skipPathPrefixes;
     public String skipFixedStrings;
@@ -46,6 +48,7 @@ public class Config {
         cfg.fileList = prop.getProperty("file_list").trim();
         cfg.keyPrefix = prop.getProperty("key_prefix", "").trim();
         cfg.upHost = prop.getProperty("up_host").trim();
+        cfg.rsHost=prop.getProperty("rs_host").trim();
 
         cfg.ignoreDir = Boolean.parseBoolean(prop.getProperty("ignore_dir").trim());
         cfg.overwrite = Boolean.parseBoolean(prop.getProperty("overwrite").trim());
@@ -53,6 +56,13 @@ public class Config {
         cfg.checkHash = Boolean.parseBoolean(prop.getProperty("check_hash").trim());
         cfg.rescanLocal = Boolean.parseBoolean(prop.getProperty("rescan_local").trim());
 
+        String skipEmptyFileVar = prop.getProperty("skip_empty_file").trim();
+        if (skipEmptyFileVar.equals("true") || skipEmptyFileVar.equals("false")) {
+            cfg.skipEmptyFile = Boolean.parseBoolean(skipEmptyFileVar);
+        } else {
+            //default is true
+            cfg.skipEmptyFile = true;
+        }
         cfg.skipFilePrefixes = prop.getProperty("skip_file_prefixes", "").trim();
         cfg.skipPathPrefixes = prop.getProperty("skip_path_prefixes", "").trim();
         cfg.skipFixedStrings = prop.getProperty("skip_fixed_strings", "").trim();

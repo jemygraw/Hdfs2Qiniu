@@ -1,6 +1,7 @@
 package com.pdex;
 
 import com.qiniu.common.QiniuException;
+import com.qiniu.common.Zone;
 import com.qiniu.http.Response;
 import com.qiniu.storage.BucketManager;
 import com.qiniu.storage.UploadManager;
@@ -144,7 +145,7 @@ public class Hdfs2Qiniu {
      */
     public void doUpload() throws RuntimeException, NoSuchAlgorithmException, IOException, InterruptedException {
         //list file
-        File cacheFile = new File(jobDir, jobId + ".cache");
+        final File cacheFile = new File(jobDir, jobId + ".cache");
         File cacheFileTmp = new File(jobDir, jobId + ".cache.temp");
 
         log.debug("cache file is " + cacheFile.getAbsolutePath());
@@ -162,6 +163,17 @@ public class Hdfs2Qiniu {
         this.recordDb = DBMaker.fileDB(recordDbPath).fileMmapEnable().checksumHeaderBypass().make();
         final ConcurrentMap<String, Long> recordMap = recordDb.hashMap("map", Serializer.STRING, Serializer.LONG)
                 .createOrOpen();
+
+        //init storage config
+        com.qiniu.storage.Configuration storageCfg = new com.qiniu.storage.Configuration();
+        if (this.uploadCfg.upHost.length() != 0) {
+            Zone.Builder builder = new Zone.Builder().upHttp(this.uploadCfg.upHost).upBackupHttp(this.uploadCfg.upHost);
+            if (this.uploadCfg.rsHost.length() != 0) {
+                builder.rsHttp(this.uploadCfg.rsHost);
+            }
+            Zone zone = builder.build();
+            storageCfg.zone = zone;
+        }
 
         ExecutorService executorService = Executors.newFixedThreadPool(worker);
         //upload files
@@ -182,6 +194,12 @@ public class Hdfs2Qiniu {
             String hdfsRelPath = trimPrefix(hdfsPath, this.uploadCfg.srcDir);
             hdfsRelPath = trimPrefix(hdfsRelPath, "/");
 
+            //check whether empty
+            final boolean isEmptyFile = (fileSize == 0);
+            if (this.uploadCfg.skipEmptyFile && isEmptyFile) {
+                log.info(String.format("skip upload of %s because it is an empty file", hdfsPath));
+                continue;
+            }
 
             //check skip rules
             if (skipByPrefixes(hdfsRelPath, this.uploadCfg.skipFilePrefixes)) {
@@ -233,37 +251,46 @@ public class Hdfs2Qiniu {
             }
 
             FileRecorder fileRecorder = new FileRecorder(jobDir);
-
-            final UploadManager uploadManager = new UploadManager(new com.qiniu.storage.Configuration(), fileRecorder);
+            final UploadManager uploadManager = new UploadManager(storageCfg, fileRecorder);
             final String uploadToken = upToken;
             final String targetFileKey = fileKey;
 
             //read fs input stream
-            try {
-                final FSDataInputStream fsDataInputStream = this.hdfsFileSystem.open(new Path(hdfsPath));
-                executorService.submit(new Runnable() {
-                    public void run() {
-                        try {
-                            long start = System.currentTimeMillis();
-                            log.info(String.format("start to upload %s => %s", hdfsPath, targetFileKey));
+            executorService.submit(new Runnable() {
+                public void run() {
+                    FSDataInputStream fsDataInputStream = null;
+                    try {
+                        long start = System.currentTimeMillis();
+                        log.info(String.format("start to upload %s => %s", hdfsPath, targetFileKey));
+
+                        if (isEmptyFile) {
+                            uploadManager.put(new byte[0], targetFileKey, uploadToken);
+                        } else {
+                            fsDataInputStream = hdfsFileSystem.open(new Path(hdfsPath));
                             uploadManager.put(fsDataInputStream, targetFileKey, uploadToken, null, null);
-                            //upload success, write into local record database
-                            recordMap.put(recordKey, fileLastModified);
-                            long duration = System.currentTimeMillis() - start;
-                            log.info(String.format("upload success of %s => %s, duration: %.2f s", hdfsPath,
-                                    targetFileKey, duration / 1000.0));
-                        } catch (QiniuException ex) {
-                            //log error
-                            log.error(String.format("upload failed for %s => %s, error: %s", hdfsPath,
-                                    targetFileKey, ex.error()));
+                        }
+
+                        //upload success, write into local record database
+                        recordMap.put(recordKey, fileLastModified);
+                        long duration = System.currentTimeMillis() - start;
+                        log.info(String.format("upload success of %s => %s, duration: %.2f s", hdfsPath,
+                                targetFileKey, duration / 1000.0));
+                    } catch (QiniuException ex) {
+                        //log error
+                        log.error(String.format("upload failed for %s => %s, error: %s", hdfsPath,
+                                targetFileKey, ex.error()));
+                    } catch (IOException ex) {
+                        log.error(String.format("open hdfs file stream failed for %s => %s, error: %s", hdfsPath,
+                                targetFileKey, ex.getMessage()));
+                    } finally {
+                        try {
+                            fsDataInputStream.close();
+                        } catch (IOException ex) {
+
                         }
                     }
-                });
-
-            } catch (IOException ex) {
-                log.error(String.format("open hdfs file stream failed for %s => %s, error: %s", hdfsPath,
-                        targetFileKey, ex.getMessage()));
-            }
+                }
+            });
         }
 
         //wait for them to finish
@@ -285,6 +312,7 @@ public class Hdfs2Qiniu {
      * @param fileSize
      * @return need to upload or not
      */
+
     private boolean needToUpload(ConcurrentMap<String, Long> recordMap, String recordKey,
                                  String hdfsPath, String fileKey, long fileSize, long fileLastModified) {
         boolean toUpload = false;
@@ -293,11 +321,12 @@ public class Hdfs2Qiniu {
             try {
                 FileInfo fileInfo = this.bucketManager.stat(this.uploadCfg.bucket, fileKey);
                 if (this.uploadCfg.checkHash) {
+                    FSDataInputStream fsDataInputStream = null;
                     try {
-                        FSDataInputStream fsDataInputStream = this.hdfsFileSystem.open(new Path(hdfsPath));
+                        fsDataInputStream = this.hdfsFileSystem.open(new Path(hdfsPath));
                         String etag = Etag.stream(fsDataInputStream, fileSize);
                         if (etag.equals(fileInfo.hash)) {
-                            log.info(String.format("local file %s shares the same etag with file %s in bucket, no need to upload",
+                            log.info(String.format("local file %s shares the same etag with file %s in bucket, skip upload",
                                     hdfsPath, fileKey));
                             toUpload = false;
                         } else {
@@ -314,6 +343,12 @@ public class Hdfs2Qiniu {
                     } catch (IOException ex) {
                         log.error(String.format("failed to calc etag for %s, error %s, upload it by default", hdfsPath, ex.getMessage()));
                         toUpload = true;
+                    } finally {
+                        try {
+                            fsDataInputStream.close();
+                        } catch (IOException ex) {
+
+                        }
                     }
                 } else {
                     if (fileSize != fileInfo.fsize) {
@@ -335,7 +370,7 @@ public class Hdfs2Qiniu {
                 }
             } catch (QiniuException ex) {
                 // file not exists
-                log.info(String.format("local file %s is not in bucket with name %s, upload the new file", hdfsPath, fileKey));
+                log.debug(String.format("local file %s is not in bucket with name %s, upload the new file", hdfsPath, fileKey));
                 toUpload = true;
             }
         } else {
@@ -354,13 +389,13 @@ public class Hdfs2Qiniu {
                         toUpload = false;
                     }
                 } else {
-                    log.info(String.format("local file %s not changed since last uploaded to %s in bucket",
+                    log.debug(String.format("local file %s not changed since last uploaded to %s in bucket",
                             hdfsPath, fileKey));
                     toUpload = false;
                 }
             } else {
                 //no record, new file
-                log.info(String.format("local record for file %s => %s not found, upload the new file", hdfsPath, fileKey));
+                log.debug(String.format("local record for file %s => %s not found, upload the new file", hdfsPath, fileKey));
                 toUpload = true;
             }
         }
