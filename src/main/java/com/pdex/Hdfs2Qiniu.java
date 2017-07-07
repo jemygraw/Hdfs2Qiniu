@@ -201,12 +201,12 @@ public class Hdfs2Qiniu {
             }
 
             //check skip rules
-            if (skipByPrefixes(hdfsRelPath, this.uploadCfg.skipFilePrefixes)) {
+            if (skipByFilePrefixes(hdfsRelPath, this.uploadCfg.skipFilePrefixes)) {
                 log.info(String.format("skip upload of %s by file prefixes", hdfsPath));
                 continue;
             }
 
-            if (skipByPrefixes(hdfsRelPath, this.uploadCfg.skipPathPrefixes)) {
+            if (skipByPathPrefixes(hdfsRelPath, this.uploadCfg.skipPathPrefixes)) {
                 log.info(String.format("skip upload of %s by path prefixes", hdfsPath));
                 continue;
             }
@@ -401,10 +401,22 @@ public class Hdfs2Qiniu {
         return toUpload;
     }
 
-    /**
-     * skip by file prefix work for some specific file in a folder to skip
-     */
-    private boolean skipByPrefixes(String relPath, String skipPrefixes) {
+
+    private boolean skipByFilePrefixes(String relPath, String skipPrefixes) {
+        String baseName = getBaseName(relPath);
+        if (skipPrefixes.trim().length() > 0) {
+            String[] prefixes = skipPrefixes.split(",");
+            for (String prefix : prefixes) {
+                String cPrefix = prefix.trim();
+                if (baseName.startsWith(cPrefix)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean skipByPathPrefixes(String relPath, String skipPrefixes) {
         if (skipPrefixes.trim().length() > 0) {
             String[] prefixes = skipPrefixes.split(",");
             for (String prefix : prefixes) {

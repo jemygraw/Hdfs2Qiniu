@@ -90,6 +90,9 @@ public class Config {
         if (config.secretKey.length() == 0) {
             throw new IllegalArgumentException("secret key is not set");
         }
+        if (config.srcDir.length() == 0) {
+            throw new IllegalArgumentException("hdfs src dir is not set");
+        }
         if (config.bucket.length() == 0) {
             throw new IllegalArgumentException("bucket is not set");
         }
