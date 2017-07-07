@@ -1,9 +1,5 @@
 package com.pdex;
 
-import org.apache.hadoop.fs.Hdfs;
-import org.apache.log4j.spi.LoggerFactory;
-import org.slf4j.spi.LoggerFactoryBinder;
-
 import java.io.IOException;
 
 /**
