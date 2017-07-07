@@ -13,6 +13,6 @@ public class TestCases {
     public void testList() throws IOException {
         String cfgFile="src/main/resources/upload.properties";
         Config cfg= Config.loadFromFile(cfgFile);
-        Hdfs2Qiniu h=new Hdfs2Qiniu(cfg,1);
+
     }
 }

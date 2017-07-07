@@ -1,6 +1,8 @@
 package com.pdex;
 
 import org.apache.hadoop.fs.Hdfs;
+import org.apache.log4j.spi.LoggerFactory;
+import org.slf4j.spi.LoggerFactoryBinder;
 
 import java.io.IOException;
 
@@ -9,6 +11,7 @@ import java.io.IOException;
  */
 public class MainEntry {
     public static void main(String args[]) throws Exception {
+
         if (!(args.length == 1 || args.length == 2)) {
             System.out.println("Usage: hdfs2qiniu uploadConfigFile [worker]");
             return;
