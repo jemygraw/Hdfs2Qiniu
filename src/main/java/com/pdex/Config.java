@@ -13,7 +13,6 @@ public class Config {
     public String secretKey;
     public String srcDir;
     public String bucket;
-    public String fileList;
     public String keyPrefix;
     public String upHost;
     public String rsHost;

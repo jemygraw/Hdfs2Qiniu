@@ -317,7 +317,7 @@ public class Hdfs2Qiniu {
         cacheFileReader.close();
         //wait for them to finish
         executorService.shutdown();
-        executorService.awaitTermination(10, TimeUnit.HOURS);
+        executorService.awaitTermination(1000, TimeUnit.HOURS);
         this.recordDb.close();
         long endTime = System.currentTimeMillis();
         long duration = (endTime - startTime) / 1000;
