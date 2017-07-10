@@ -57,7 +57,7 @@ public class Hdfs2Qiniu {
     }
 
     private void listFiles(String hdfsDirPath, File listResultFile) throws IOException {
-        BufferedWriter bufferedWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(listResultFile)));
+        BufferedWriter bufferedWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(listResultFile), "utf-8"));
         this.listFiles(hdfsDirPath, bufferedWriter);
         bufferedWriter.flush();
         bufferedWriter.close();
@@ -71,7 +71,7 @@ public class Hdfs2Qiniu {
                 listFiles(status.getPath().toString(), listResultWriter);
             } else {
                 //path\tsize\tlast modified
-                String fileLine = String.format("%s\t%d\t%d\n", status.getPath().toString(), status.getLen(),
+                String fileLine = String.format("%s\t%d\t%d%n", status.getPath().toString(), status.getLen(),
                         status.getModificationTime());
                 listResultWriter.write(fileLine);
             }
@@ -135,6 +135,8 @@ public class Hdfs2Qiniu {
             fileAppender = new FileAppender(logLayout, logFile, true);
         }
         root.addAppender(fileAppender);
+
+        System.out.println("[HDFS2QINIU] logging output to file " + logFile + " ...");
     }
 
 
@@ -146,6 +148,7 @@ public class Hdfs2Qiniu {
     public void doUpload() throws RuntimeException, NoSuchAlgorithmException, IOException, InterruptedException {
         long startTime = System.currentTimeMillis();
         long totalFileCount = 0;
+        long currentFileCount = 0;
         long skippedByRulesCount = 0;
         long skippedByIntelliCount = 0;
         long skippedByEmpty = 0;
@@ -153,12 +156,13 @@ public class Hdfs2Qiniu {
         final AtomicInteger uploadSuccess = new AtomicInteger(0);
         final AtomicInteger uploadFailed = new AtomicInteger(0);
 
+        log.info("upload working dir " + this.jobDir);
 
         //list file
         final File cacheFile = new File(jobDir, jobId + ".cache");
         File cacheFileTmp = new File(jobDir, jobId + ".cache.temp");
 
-        log.debug("cache file is " + cacheFile.getAbsolutePath());
+        log.info("cache file is " + cacheFile.getAbsolutePath());
         if (!cacheFile.exists() || this.uploadCfg.rescanLocal) {
             //file not found or rescan local required, recache it
             this.listFiles(this.uploadCfg.srcDir, cacheFileTmp);
@@ -181,21 +185,29 @@ public class Hdfs2Qiniu {
             if (this.uploadCfg.rsHost.length() != 0) {
                 builder.rsHttp(this.uploadCfg.rsHost);
             }
-            Zone zone = builder.build();
-            storageCfg.zone = zone;
+            storageCfg.zone = builder.build();
         }
+
+        totalFileCount = getFileCount(cacheFile);
 
         ExecutorService executorService = Executors.newFixedThreadPool(worker);
         //upload files
-        BufferedReader cacheFileReader = new BufferedReader(new InputStreamReader(new FileInputStream(cacheFile)));
-        String line = null;
+        BufferedReader cacheFileReader = new BufferedReader(new InputStreamReader(new FileInputStream(cacheFile), "utf-8"));
+        String line;
         while ((line = cacheFileReader.readLine()) != null) {
             String[] items = line.trim().split("\t");
             if (items.length != 3) {
                 continue;
             }
 
-            totalFileCount += 1;
+            currentFileCount += 1;
+
+            double percent = 0;
+            if (totalFileCount > 0) {
+                percent = currentFileCount * 100.0 / totalFileCount;
+            }
+
+            System.out.print(String.format("[HDFS2QINIU] %d/%d(%.2f%%)\r", currentFileCount, totalFileCount, percent));
 
             //file properties
             final String hdfsPath = items[0];
@@ -305,7 +317,9 @@ public class Hdfs2Qiniu {
                         uploadFailed.addAndGet(1);
                     } finally {
                         try {
-                            fsDataInputStream.close();
+                            if (fsDataInputStream != null) {
+                                fsDataInputStream.close();
+                            }
                         } catch (IOException ex) {
 
                         }
@@ -321,14 +335,48 @@ public class Hdfs2Qiniu {
         this.recordDb.close();
         long endTime = System.currentTimeMillis();
         long duration = (endTime - startTime) / 1000;
-        log.info("all upload tasks has finished");
-        log.info(String.format("%20s%10d", "total:", totalFileCount));
-        log.info(String.format("%20s%10d", "success:", uploadSuccess.get()));
-        log.info(String.format("%20s%10d", "failure:", uploadFailed.get()));
-        log.info(String.format("%20s%10d", "skipped(rule):", skippedByRulesCount));
-        log.info(String.format("%20s%10d", "skipped(auto):", skippedByIntelliCount));
-        log.info(String.format("%20s%10d", "skipped(empty):", skippedByEmpty));
-        log.info(String.format("%20s%10s", "duration:", formatDuration(duration)));
+        log.info("all upload tasks have finished the work");
+        System.out.println("[HDFS2QINIU] all upload tasks have finished the work");
+        printResult("total:", totalFileCount);
+        printResult("success:", uploadSuccess.get());
+        printResult("failure:", uploadFailed.get());
+        printResult("skipped(rule):", skippedByRulesCount);
+        printResult("skipped(auto):", skippedByIntelliCount);
+        printResult("skipped(empty):", skippedByEmpty);
+        printResult("duration:", formatDuration(duration));
+    }
+
+    private long getFileCount(File file) {
+        long totalFileCount = 0;
+        BufferedReader cacheFileReader = null;
+
+        try {
+            cacheFileReader = new BufferedReader(new InputStreamReader(new FileInputStream(file), "utf-8"));
+            while (cacheFileReader.readLine() != null) {
+                totalFileCount += 1;
+            }
+        } catch (IOException ex) {
+            if (cacheFileReader != null) {
+                try {
+                    cacheFileReader.close();
+                } catch (IOException xe) {
+                }
+            }
+        }
+
+        return totalFileCount;
+    }
+
+    private void printResult(String colName, long colVal) {
+        String msg = String.format("%20s%10d", colName, colVal);
+        log.info(msg);
+        System.out.println("[HDFS2QINIU] " + msg);
+    }
+
+    private void printResult(String colName, String colVal) {
+        String msg = String.format("%20s%10s", colName, colVal);
+        log.info(msg);
+        System.out.println("[HDFS2QINIU] " + msg);
     }
 
 
@@ -377,7 +425,9 @@ public class Hdfs2Qiniu {
                         toUpload = true;
                     } finally {
                         try {
-                            fsDataInputStream.close();
+                            if (fsDataInputStream != null) {
+                                fsDataInputStream.close();
+                            }
                         } catch (IOException ex) {
 
                         }

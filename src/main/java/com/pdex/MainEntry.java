@@ -30,12 +30,17 @@ public class MainEntry {
         //load config and do upload
         try {
             Config config = Config.loadFromFile(configFile);
-            Hdfs2Qiniu h = new Hdfs2Qiniu(config, worker);
-            h.doUpload();
+
+            try {
+                Hdfs2Qiniu h = new Hdfs2Qiniu(config, worker);
+                h.doUpload();
+            } catch (IOException ex) {
+                System.err.println("upload files error");
+                ex.printStackTrace();
+            }
         } catch (IOException ex) {
             System.err.println("load upload config file error");
             throw ex;
-
         }
     }
 }

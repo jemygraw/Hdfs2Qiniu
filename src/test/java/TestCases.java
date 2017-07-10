@@ -1,6 +1,4 @@
-
 import com.pdex.Config;
-import com.pdex.Hdfs2Qiniu;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -11,8 +9,7 @@ import java.io.IOException;
 public class TestCases {
     @Test
     public void testList() throws IOException {
-        String cfgFile="src/main/resources/upload.properties";
-        Config cfg= Config.loadFromFile(cfgFile);
+        String cfgFile = "src/main/resources/upload.properties";
 
     }
 }
