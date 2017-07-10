@@ -276,8 +276,9 @@ public class Hdfs2Qiniu {
                                 targetFileKey, duration / 1000.0));
                     } catch (QiniuException ex) {
                         //log error
-                        log.error(String.format("upload failed for %s => %s, error: %s", hdfsPath,
-                                targetFileKey, ex.error()));
+                        ex.printStackTrace();
+                        log.error(String.format("upload failed for %s => %s, error: %s, %s", hdfsPath,
+                                targetFileKey, ex.getMessage(), ex.error()));
                     } catch (IOException ex) {
                         log.error(String.format("open hdfs file stream failed for %s => %s, error: %s", hdfsPath,
                                 targetFileKey, ex.getMessage()));
@@ -292,10 +293,12 @@ public class Hdfs2Qiniu {
             });
         }
 
+        cacheFileReader.close();
         //wait for them to finish
         executorService.shutdown();
         executorService.awaitTermination(10, TimeUnit.HOURS);
         this.recordDb.close();
+        log.info("all upload tasks has finished");
     }
 
 
@@ -388,13 +391,13 @@ public class Hdfs2Qiniu {
                         toUpload = false;
                     }
                 } else {
-                    log.debug(String.format("local file %s not changed since last uploaded to %s in bucket",
+                    log.info(String.format("local file %s not changed since last uploaded to %s in bucket",
                             hdfsPath, fileKey));
                     toUpload = false;
                 }
             } else {
                 //no record, new file
-                log.debug(String.format("local record for file %s => %s not found, upload the new file", hdfsPath, fileKey));
+                log.info(String.format("local record for file %s => %s not found, upload the new file", hdfsPath, fileKey));
                 toUpload = true;
             }
         }
