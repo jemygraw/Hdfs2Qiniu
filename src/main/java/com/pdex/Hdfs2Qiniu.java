@@ -149,12 +149,15 @@ public class Hdfs2Qiniu {
         long startTime = System.currentTimeMillis();
         long totalFileCount = 0;
         long currentFileCount = 0;
+        long notOverwriteCount = 0;
+
         long skippedByRulesCount = 0;
         long skippedByIntelliCount = 0;
         long skippedByEmpty = 0;
 
         final AtomicInteger uploadSuccess = new AtomicInteger(0);
         final AtomicInteger uploadFailed = new AtomicInteger(0);
+        final AtomicInteger overwriteCount = new AtomicInteger(0);
 
         log.info("upload working dir " + this.jobDir);
 
@@ -192,7 +195,8 @@ public class Hdfs2Qiniu {
 
         ExecutorService executorService = Executors.newFixedThreadPool(worker);
         //upload files
-        BufferedReader cacheFileReader = new BufferedReader(new InputStreamReader(new FileInputStream(cacheFile), "utf-8"));
+        BufferedReader cacheFileReader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(cacheFile), "utf-8"));
         String line;
         while ((line = cacheFileReader.readLine()) != null) {
             String[] items = line.trim().split("\t");
@@ -261,12 +265,20 @@ public class Hdfs2Qiniu {
 
             final String recordKey = String.format("%s:%s", hdfsPath, fileKey);
             //check whether need to upload
-            if (!this.needToUpload(recordMap, recordKey, hdfsPath, fileKey, fileSize, fileLastModified)) {
-                //no need to upload
-                skippedByIntelliCount += 1;
-                continue;
+            UploadStatus uploadStatus = this.needToUpload(recordMap, recordKey, hdfsPath, fileKey,
+                    fileSize, fileLastModified);
+            if (!uploadStatus.needToUpload) {
+                if (uploadStatus.needToOverwrite && !this.uploadCfg.overwrite) {
+                    notOverwriteCount += 1;
+                    continue;
+                } else {
+                    //no need to upload
+                    skippedByIntelliCount += 1;
+                    continue;
+                }
             }
 
+            final boolean isOverwriteUpload = uploadStatus.needToOverwrite;
             // do upload preparation work
             StringMap putPolicy = new StringMap();
             putPolicy.put("fileType", this.uploadCfg.fileType);
@@ -306,6 +318,7 @@ public class Hdfs2Qiniu {
                         log.info(String.format("upload success of %s => %s, duration: %.2f s", hdfsPath,
                                 targetFileKey, duration / 1000.0));
                         uploadSuccess.addAndGet(1);
+                        overwriteCount.addAndGet(1);
                     } catch (QiniuException ex) {
                         //log error
                         log.error(String.format("upload failed for %s => %s, error: %s, %s", hdfsPath,
@@ -335,11 +348,16 @@ public class Hdfs2Qiniu {
         this.recordDb.close();
         long endTime = System.currentTimeMillis();
         long duration = (endTime - startTime) / 1000;
-        log.info("all upload tasks have finished the work");
-        System.out.println("[HDFS2QINIU] all upload tasks have finished the work");
+        log.info("upload tasks have finished the work");
+        System.out.println("[HDFS2QINIU] upload tasks have finished the work");
         printResult("total:", totalFileCount);
         printResult("success:", uploadSuccess.get());
         printResult("failure:", uploadFailed.get());
+        if (this.uploadCfg.overwrite) {
+            printResult("overwrite(yes):", overwriteCount.get());
+        } else {
+            printResult("overwrite(no):", notOverwriteCount);
+        }
         printResult("skipped(rule):", skippedByRulesCount);
         printResult("skipped(auto):", skippedByIntelliCount);
         printResult("skipped(empty):", skippedByEmpty);
@@ -385,17 +403,18 @@ public class Hdfs2Qiniu {
      * check from the remote bucket with hash or size
      * if check_exists set, local record database is ignored
      *
-     * @param recordMap
-     * @param recordKey
-     * @param hdfsPath
-     * @param fileKey
-     * @param fileSize
      * @return need to upload or not
      */
 
-    private boolean needToUpload(ConcurrentMap<String, Long> recordMap, String recordKey,
-                                 String hdfsPath, String fileKey, long fileSize, long fileLastModified) {
-        boolean toUpload = false;
+    class UploadStatus {
+        boolean needToUpload;
+        boolean needToOverwrite;
+    }
+
+    private UploadStatus needToUpload(ConcurrentMap<String, Long> recordMap, String recordKey,
+                                      String hdfsPath, String fileKey, long fileSize, long fileLastModified) {
+        boolean needUpload = false;
+        boolean needOverwrite = false;
         if (this.uploadCfg.checkExists) {
             //stat whether in bucket
             try {
@@ -408,21 +427,22 @@ public class Hdfs2Qiniu {
                         if (etag.equals(fileInfo.hash)) {
                             log.info(String.format("local file %s shares the same etag with file %s in bucket, skip upload",
                                     hdfsPath, fileKey));
-                            toUpload = false;
+                            needUpload = false;
                         } else {
+                            needOverwrite = true;
                             if (this.uploadCfg.overwrite) {
                                 log.info(String.format("local file %s has the different etag to file %s in bucket, upload to overwrite",
                                         hdfsPath, fileKey));
-                                toUpload = true;
+                                needUpload = true;
                             } else {
                                 log.warn(String.format("local file %s has the different etag to file %s in bucket, but overwrite upload disabled",
                                         hdfsPath, fileKey));
-                                toUpload = false;
+                                needUpload = false;
                             }
                         }
                     } catch (IOException ex) {
                         log.error(String.format("failed to calc etag for %s, error %s, upload it by default", hdfsPath, ex.getMessage()));
-                        toUpload = true;
+                        needUpload = true;
                     } finally {
                         try {
                             if (fsDataInputStream != null) {
@@ -434,54 +454,59 @@ public class Hdfs2Qiniu {
                     }
                 } else {
                     if (fileSize != fileInfo.fsize) {
+                        needOverwrite = true;
                         //file changed
                         if (this.uploadCfg.overwrite) {
                             log.info(String.format("local file %s changed, upload to overwrite file %s in bucket",
                                     hdfsPath, fileKey));
-                            toUpload = true;
+                            needUpload = true;
                         } else {
-                            log.warn(String.format("local file %s changed, but upload to overwrite file %s in bucket disabled",
+                            log.warn(String.format("local file %s changed, but overwrite upload disabled for file %s in bucket",
                                     hdfsPath, fileKey));
-                            toUpload = false;
+                            needUpload = false;
                         }
                     } else {
                         //no change
                         log.info(String.format("local file %s has the same size with file %s in bucket, skip upload", hdfsPath, fileKey));
-                        toUpload = false;
+                        needUpload = false;
                     }
                 }
             } catch (QiniuException ex) {
                 // file not exists
                 log.debug(String.format("local file %s is not in bucket with name %s, upload the new file", hdfsPath, fileKey));
-                toUpload = true;
+                needUpload = true;
             }
         } else {
             if (recordMap.containsKey(recordKey)) {
                 // has been uploaded, check modified or not
                 Long recordLastModifed = Long.parseLong(recordMap.get(recordKey).toString());
                 if (recordLastModifed != fileLastModified) {
+                    needOverwrite = true;
                     //file changed
                     if (this.uploadCfg.overwrite) {
                         log.info(String.format("local file %s changed, will upload to overwrite file %s in bucket",
                                 hdfsPath, fileKey));
-                        toUpload = true;
+                        needUpload = true;
                     } else {
                         log.warn(String.format("local file %s changed, disabled to upload to overwrite file %s in bucket",
                                 hdfsPath, fileKey));
-                        toUpload = false;
+                        needUpload = false;
                     }
                 } else {
                     log.info(String.format("local file %s not changed since last uploaded to %s in bucket",
                             hdfsPath, fileKey));
-                    toUpload = false;
+                    needUpload = false;
                 }
             } else {
                 //no record, new file
                 log.info(String.format("local record for file %s => %s not found, upload the new file", hdfsPath, fileKey));
-                toUpload = true;
+                needUpload = true;
             }
         }
-        return toUpload;
+        UploadStatus status = new UploadStatus();
+        status.needToOverwrite = needOverwrite;
+        status.needToUpload = needUpload;
+        return status;
     }
 
 
