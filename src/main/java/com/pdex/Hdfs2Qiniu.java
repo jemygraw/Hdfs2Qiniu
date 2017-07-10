@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Created by jemy on 30/06/2017.
@@ -143,6 +144,16 @@ public class Hdfs2Qiniu {
      * otherwise, we use this cache file to do the upload job
      */
     public void doUpload() throws RuntimeException, NoSuchAlgorithmException, IOException, InterruptedException {
+        long startTime = System.currentTimeMillis();
+        long totalFileCount = 0;
+        long skippedByRulesCount = 0;
+        long skippedByIntelliCount = 0;
+        long skippedByEmpty = 0;
+
+        final AtomicInteger uploadSuccess = new AtomicInteger(0);
+        final AtomicInteger uploadFailed = new AtomicInteger(0);
+
+
         //list file
         final File cacheFile = new File(jobDir, jobId + ".cache");
         File cacheFileTmp = new File(jobDir, jobId + ".cache.temp");
@@ -184,6 +195,8 @@ public class Hdfs2Qiniu {
                 continue;
             }
 
+            totalFileCount += 1;
+
             //file properties
             final String hdfsPath = items[0];
             long fileSize = Long.parseLong(items[1]);
@@ -197,27 +210,32 @@ public class Hdfs2Qiniu {
             final boolean isEmptyFile = (fileSize == 0);
             if (this.uploadCfg.skipEmptyFile && isEmptyFile) {
                 log.info(String.format("skip upload of %s because it is an empty file", hdfsPath));
+                skippedByEmpty += 1;
                 continue;
             }
 
             //check skip rules
             if (skipByFilePrefixes(hdfsRelPath, this.uploadCfg.skipFilePrefixes)) {
                 log.info(String.format("skip upload of %s by file prefixes", hdfsPath));
+                skippedByRulesCount += 1;
                 continue;
             }
 
             if (skipByPathPrefixes(hdfsRelPath, this.uploadCfg.skipPathPrefixes)) {
                 log.info(String.format("skip upload of %s by path prefixes", hdfsPath));
+                skippedByRulesCount += 1;
                 continue;
             }
 
             if (skipBySuffixes(hdfsRelPath, this.uploadCfg.skipSuffixes)) {
                 log.info(String.format("skip upload of %s by suffixes", hdfsPath));
+                skippedByRulesCount += 1;
                 continue;
             }
 
             if (skipByFixedStrings(hdfsRelPath, this.uploadCfg.skipFixedStrings)) {
                 log.info(String.format("skip upload of %s by fixed strings", hdfsPath));
+                skippedByRulesCount += 1;
                 continue;
             }
 
@@ -233,6 +251,7 @@ public class Hdfs2Qiniu {
             //check whether need to upload
             if (!this.needToUpload(recordMap, recordKey, hdfsPath, fileKey, fileSize, fileLastModified)) {
                 //no need to upload
+                skippedByIntelliCount += 1;
                 continue;
             }
 
@@ -274,14 +293,16 @@ public class Hdfs2Qiniu {
                         long duration = System.currentTimeMillis() - start;
                         log.info(String.format("upload success of %s => %s, duration: %.2f s", hdfsPath,
                                 targetFileKey, duration / 1000.0));
+                        uploadSuccess.addAndGet(1);
                     } catch (QiniuException ex) {
                         //log error
-                        ex.printStackTrace();
                         log.error(String.format("upload failed for %s => %s, error: %s, %s", hdfsPath,
                                 targetFileKey, ex.getMessage(), ex.error()));
+                        uploadFailed.addAndGet(1);
                     } catch (IOException ex) {
                         log.error(String.format("open hdfs file stream failed for %s => %s, error: %s", hdfsPath,
                                 targetFileKey, ex.getMessage()));
+                        uploadFailed.addAndGet(1);
                     } finally {
                         try {
                             fsDataInputStream.close();
@@ -298,7 +319,16 @@ public class Hdfs2Qiniu {
         executorService.shutdown();
         executorService.awaitTermination(10, TimeUnit.HOURS);
         this.recordDb.close();
+        long endTime = System.currentTimeMillis();
+        long duration = (endTime - startTime) / 1000;
         log.info("all upload tasks has finished");
+        log.info(String.format("%20s%10d", "total:", totalFileCount));
+        log.info(String.format("%20s%10d", "success:", uploadSuccess.get()));
+        log.info(String.format("%20s%10d", "failure:", uploadFailed.get()));
+        log.info(String.format("%20s%10d", "skipped(rule):", skippedByRulesCount));
+        log.info(String.format("%20s%10d", "skipped(auto):", skippedByIntelliCount));
+        log.info(String.format("%20s%10d", "skipped(empty):", skippedByEmpty));
+        log.info(String.format("%20s%10s", "duration:", formatDuration(duration)));
     }
 
 
@@ -475,6 +505,26 @@ public class Hdfs2Qiniu {
         }
 
         return path;
+    }
+
+    private long SECOND = 1;
+    private long MINUTE = 60 * SECOND;
+    private long HOUR = 60 * MINUTE;
+
+    private String formatDuration(long duration) {
+        if (duration > HOUR) {
+            long hours = duration / HOUR;
+            long minutes = (duration - hours * HOUR) / MINUTE;
+            long seconds = duration - hours * HOUR - minutes * MINUTE;
+            return String.format("%dh %dm %ds", hours, minutes, seconds);
+        } else if (duration > MINUTE) {
+            long minutes = duration / MINUTE;
+            long seconds = duration - minutes * MINUTE;
+            return String.format("%dm %ds", minutes, seconds);
+        } else {
+            long seconds = duration;
+            return String.format("%ds", seconds);
+        }
     }
 
 }
