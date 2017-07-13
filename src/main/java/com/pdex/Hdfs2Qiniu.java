@@ -318,7 +318,9 @@ public class Hdfs2Qiniu {
                         log.info(String.format("upload success of %s => %s, duration: %.2f s", hdfsPath,
                                 targetFileKey, duration / 1000.0));
                         uploadSuccess.addAndGet(1);
-                        overwriteCount.addAndGet(1);
+                        if (isOverwriteUpload) {
+                            overwriteCount.addAndGet(1);
+                        }
                     } catch (QiniuException ex) {
                         //log error
                         log.error(String.format("upload failed for %s => %s, error: %s, %s", hdfsPath,
@@ -472,9 +474,19 @@ public class Hdfs2Qiniu {
                     }
                 }
             } catch (QiniuException ex) {
-                // file not exists
-                log.debug(String.format("local file %s is not in bucket with name %s, upload the new file", hdfsPath, fileKey));
-                needUpload = true;
+                if (ex.code() == 612) {
+                    // file not exists
+                    log.info(String.format("local file %s not exist in bucket with name %s, need upload", hdfsPath, fileKey));
+                    needUpload = true;
+                } else {
+                    if (this.uploadCfg.forceOverwrite) {
+                        log.error(String.format("local file %s with name %s status unavailable, force upload", hdfsPath, fileKey));
+                        needUpload = true;
+                    } else {
+                        log.error(String.format("local file %s with name %s status unavailable, skip upload", hdfsPath, fileKey));
+                        needUpload = false;
+                    }
+                }
             }
         } else {
             if (recordMap.containsKey(recordKey)) {

@@ -18,6 +18,7 @@ public class Config {
     public String rsHost;
     public boolean ignoreDir;
     public boolean overwrite;
+    public boolean forceOverwrite;
     public boolean checkExists;
     public boolean checkHash;
     public boolean rescanLocal;
@@ -51,6 +52,7 @@ public class Config {
 
             cfg.ignoreDir = Boolean.parseBoolean(prop.getProperty("ignore_dir", "").trim());
             cfg.overwrite = Boolean.parseBoolean(prop.getProperty("overwrite", "").trim());
+            cfg.forceOverwrite = Boolean.parseBoolean(prop.getProperty("force_overwrite", "").trim());
             cfg.checkExists = Boolean.parseBoolean(prop.getProperty("check_exists", "").trim());
             cfg.checkHash = Boolean.parseBoolean(prop.getProperty("check_hash", "").trim());
             cfg.rescanLocal = Boolean.parseBoolean(prop.getProperty("rescan_local", "").trim());
