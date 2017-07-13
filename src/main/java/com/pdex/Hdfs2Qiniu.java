@@ -52,7 +52,6 @@ public class Hdfs2Qiniu {
         this.uploadCfg = uploadCfg;
         this.worker = worker;
         this.auth = Auth.create(this.uploadCfg.accessKey, this.uploadCfg.secretKey);
-        this.bucketManager = new BucketManager(this.auth, new com.qiniu.storage.Configuration());
         this.initLogging();
     }
 
@@ -191,6 +190,7 @@ public class Hdfs2Qiniu {
             storageCfg.zone = builder.build();
         }
 
+        this.bucketManager = new BucketManager(this.auth, storageCfg);
         totalFileCount = getFileCount(cacheFile);
 
         ExecutorService executorService = Executors.newFixedThreadPool(worker);
