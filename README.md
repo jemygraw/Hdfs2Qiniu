@@ -33,7 +33,7 @@ HDFS -> Hdfs2Qiniu读取文件内容 -> 上传内容到七牛存储
 
 ## 下载
 
-可以下载打包好的可执行JAR包：[hdfs2qiniu-v1.2.jar](http://devtools.qiniu.com/hdfs2qiniu-v1.2.jar)
+可以下载打包好的可执行JAR包：[hdfs2qiniu-v1.4.jar](http://devtools.qiniu.com/hdfs2qiniu-v1.4.jar)
 
 参考配置文件：[upload.properties](https://github.com/jemygraw/Hdfs2Qiniu/blob/master/src/main/resources/upload.properties)
 
